@@ -384,6 +384,16 @@ var _ = Describe("Client", func() {
 			return fields
 		}
 
+		getResponse := func(status int) []byte {
+			buf := &bytes.Buffer{}
+			rstr := mockquic.NewMockStream(mockCtrl)
+			rstr.EXPECT().Write(gomock.Any()).Do(buf.Write).AnyTimes()
+			rw := newResponseWriter(rstr, utils.DefaultLogger)
+			rw.WriteHeader(status)
+			rw.Flush()
+			return buf.Bytes()
+		}
+
 		BeforeEach(func() {
 			settingsFrameWritten = make(chan struct{})
 			controlStr := mockquic.NewMockStream(mockCtrl)
@@ -440,11 +450,7 @@ var _ = Describe("Client", func() {
 		})
 
 		It("returns a response", func() {
-			rspBuf := &bytes.Buffer{}
-			rw := newResponseWriter(rspBuf, utils.DefaultLogger)
-			rw.WriteHeader(418)
-			rw.Flush()
-
+			rspBuf := bytes.NewBuffer(getResponse(418))
 			gomock.InOrder(
 				sess.EXPECT().HandshakeComplete().Return(handshakeCtx),
 				sess.EXPECT().OpenStreamSync(context.Background()).Return(str, nil),
@@ -452,9 +458,7 @@ var _ = Describe("Client", func() {
 			)
 			str.EXPECT().Write(gomock.Any()).AnyTimes().DoAndReturn(func(p []byte) (int, error) { return len(p), nil })
 			str.EXPECT().Close()
-			str.EXPECT().Read(gomock.Any()).DoAndReturn(func(p []byte) (int, error) {
-				return rspBuf.Read(p)
-			}).AnyTimes()
+			str.EXPECT().Read(gomock.Any()).DoAndReturn(rspBuf.Read).AnyTimes()
 			rsp, err := client.RoundTrip(request)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(rsp.Proto).To(Equal("HTTP/3"))
@@ -589,10 +593,7 @@ var _ = Describe("Client", func() {
 			})
 
 			It("cancels a request after the response arrived", func() {
-				rspBuf := &bytes.Buffer{}
-				rw := newResponseWriter(rspBuf, utils.DefaultLogger)
-				rw.WriteHeader(418)
-				rw.Flush()
+				rspBuf := bytes.NewBuffer(getResponse(404))
 
 				ctx, cancel := context.WithCancel(context.Background())
 				req := request.WithContext(ctx)
@@ -655,7 +656,9 @@ var _ = Describe("Client", func() {
 				sess.EXPECT().OpenStreamSync(context.Background()).Return(str, nil)
 				sess.EXPECT().ConnectionState().Return(quic.ConnectionState{})
 				buf := &bytes.Buffer{}
-				rw := newResponseWriter(buf, utils.DefaultLogger)
+				rstr := mockquic.NewMockStream(mockCtrl)
+				rstr.EXPECT().Write(gomock.Any()).Do(buf.Write).AnyTimes()
+				rw := newResponseWriter(rstr, utils.DefaultLogger)
 				rw.Header().Set("Content-Encoding", "gzip")
 				gz := gzip.NewWriter(rw)
 				gz.Write([]byte("gzipped response"))
@@ -679,7 +682,9 @@ var _ = Describe("Client", func() {
 				sess.EXPECT().OpenStreamSync(context.Background()).Return(str, nil)
 				sess.EXPECT().ConnectionState().Return(quic.ConnectionState{})
 				buf := &bytes.Buffer{}
-				rw := newResponseWriter(buf, utils.DefaultLogger)
+				rstr := mockquic.NewMockStream(mockCtrl)
+				rstr.EXPECT().Write(gomock.Any()).Do(buf.Write).AnyTimes()
+				rw := newResponseWriter(rstr, utils.DefaultLogger)
 				rw.Write([]byte("not gzipped"))
 				rw.Flush()
 				str.EXPECT().Write(gomock.Any()).AnyTimes().DoAndReturn(func(p []byte) (int, error) { return len(p), nil })
